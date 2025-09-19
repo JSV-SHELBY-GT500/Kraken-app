@@ -1,0 +1,7 @@
+{
+  "name": "KRAKEN",
+  "description": "Administración de kakren ",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
