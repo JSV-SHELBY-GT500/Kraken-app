@@ -2,14 +2,26 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createRoot } from 'react-dom/client';
 
 // --- TYPES ---
-type CardData = { id: string; appId: string; title: string; };
+type CardData = { id: string; appId: AppId; title: string; };
 type AppId = 'gastos' | 'analiticas' | 'horarios' | 'inventario' | 'empleados' | 'miHorario' | 'misTareas' | 'misFinanzas' | 'checkIn' | 'estado' | 'apiLogs' | 'sincronizacion' | 'menu';
-type Empleado = { id: string; nombre: string; puesto: string; rfc: string; nss: string; fechaIngreso: string; sueldoBruto: number; periodicidadPago: 'Semanal' | 'Quincenal'; usuario: string; pass: string; horaEntrada: string; horaSalida: string; horasPendientes: number; clockInTime: number | null; tasks: {id: number, text: string, completed: boolean}[]; performanceRating: 'green' | 'yellow' | 'red'; loan: { active: boolean, amount: number, weeklyPayment: number }; loanRequest: { pending: boolean, amount: number, message: string }, capturedPhoto?: string };
+type Empleado = { id: string; nombre: string; puesto: string; rfc: string; nss: string; fechaIngreso: string; sueldoBruto: number; periodicidadPago: 'Semanal' | 'Quincenal'; usuario: string; pass: string; horaEntrada: string; horaSalida: string; horasPendientes: number; tasks: {id: number, text: string, completed: boolean}[]; performanceRating: 'green' | 'yellow' | 'red'; loan: { active: boolean, amount: number, weeklyPayment: number }; loanRequest: { pending: boolean, amount: number, message: string }; currentAttendanceId: string | null; };
 type Proveedor = { id: number; nombre: string; contacto: string; telefono: string; categoria: string };
 type User = { id: string, type: 'admin' | 'empleado' | 'developer' };
 type Schedule = { [day: string]: { [empleadoId: string]: string } };
 type ApiLog = { timestamp: string, request: any, response: any, error?: boolean };
 type SyncHistoryItem = { id: string; date: string; task: string; status: 'completado' | 'fallido'; itemCount: number; userId: string; details: string; };
+
+// Nueva estructura para el historial de asistencia
+interface RegistroAsistencia {
+    id: string; // UUID
+    empleadoId: string;
+    timestampEntrada: number; // Date.now()
+    timestampSalida: number | null;
+    duracionMs: number | null;
+    fotoEntrada: string; // En prototype: base64 data URL. En producción: URL to Cloud Storage.
+    coordsEntrada: { lat: number, lon: number };
+    estado: 'ACTIVO' | 'COMPLETADO';
+}
 
 // --- FINANCIAL TYPES ---
 type HistorialCosto = { fecha: string; costo: number; gastoId: string; };
@@ -37,11 +49,11 @@ type EmpleadoUpdateAction =
     | { type: 'ADD_TASK', payload: { empleadoId: string, taskText: string } } 
     | { type: 'APPROVE_LOAN', payload: { empleadoId: string } } 
     | { type: 'REJECT_LOAN', payload: { empleadoId: string } }
-    | { type: 'CLOCK_IN', payload: { empleadoId: string, timestamp: number, photo: string } }
+    | { type: 'CLOCK_IN', payload: { empleadoId: string, timestamp: number, photo: string, coords: { lat: number, lon: number } } }
     | { type: 'CLOCK_OUT', payload: { empleadoId: string, timestamp: number } };
 
 // --- DUMMY DATA ---
-const initialEmpleados: Empleado[] = [ { id: 'juan', nombre: "Juan Pérez García", puesto: "Bartender", rfc: "PEGA900101ABC", nss: "12345678901", fechaIngreso: "2024-03-15", sueldoBruto: 2000, periodicidadPago: 'Semanal', usuario: 'juan.perez', pass: '4004', horaEntrada: '14:00', horaSalida: '22:00', horasPendientes: 0, clockInTime: null, tasks: [{id: 1, text: 'Limpiar barra principal', completed: false}], performanceRating: 'green', loan: { active: false, amount: 0, weeklyPayment: 0 }, loanRequest: { pending: false, amount: 0, message: '' } }, { id: 'maria', nombre: "María López Hernández", puesto: "Mesera", rfc: "LOHM920510XYZ", nss: "10987654321", fechaIngreso: "2023-11-01", sueldoBruto: 3750, periodicidadPago: 'Quincenal', usuario: 'maria.lopez', pass: 'kraken2', horaEntrada: '13:00', horaSalida: '21:00', horasPendientes: 45, clockInTime: null, tasks: [], performanceRating: 'yellow', loan: { active: true, amount: 500, weeklyPayment: 50 }, loanRequest: { pending: false, amount: 0, message: '' } }, { id: 'carlos', nombre: "Carlos Sánchez Ruiz", puesto: "Cocinero", rfc: "SARC880320DEF", nss: "23456789012", fechaIngreso: "2024-01-20", sueldoBruto: 2200, periodicidadPago: 'Semanal', usuario: 'carlos.sanchez', pass: 'kraken3', horaEntrada: '12:00', horaSalida: '20:00', horasPendientes: 0, clockInTime: null, tasks: [], performanceRating: 'green', loan: { active: false, amount: 0, weeklyPayment: 0 }, loanRequest: { pending: true, amount: 1000, message: 'Adelanto para una emergencia familiar.' } } ];
+const initialEmpleados: Empleado[] = [ { id: 'juan', nombre: "Juan Pérez García", puesto: "Bartender", rfc: "PEGA900101ABC", nss: "12345678901", fechaIngreso: "2024-03-15", sueldoBruto: 2000, periodicidadPago: 'Semanal', usuario: 'juan.perez', pass: '4004', horaEntrada: '14:00', horaSalida: '22:00', horasPendientes: 0, currentAttendanceId: null, tasks: [{id: 1, text: 'Limpiar barra principal', completed: false}], performanceRating: 'green', loan: { active: false, amount: 0, weeklyPayment: 0 }, loanRequest: { pending: false, amount: 0, message: '' } }, { id: 'maria', nombre: "María López Hernández", puesto: "Mesera", rfc: "LOHM920510XYZ", nss: "10987654321", fechaIngreso: "2023-11-01", sueldoBruto: 3750, periodicidadPago: 'Quincenal', usuario: 'maria.lopez', pass: 'kraken2', horaEntrada: '13:00', horaSalida: '21:00', horasPendientes: 45, currentAttendanceId: null, tasks: [], performanceRating: 'yellow', loan: { active: true, amount: 500, weeklyPayment: 50 }, loanRequest: { pending: false, amount: 0, message: '' } }, { id: 'carlos', nombre: "Carlos Sánchez Ruiz", puesto: "Cocinero", rfc: "SARC880320DEF", nss: "23456789012", fechaIngreso: "2024-01-20", sueldoBruto: 2200, periodicidadPago: 'Semanal', usuario: 'carlos.sanchez', pass: 'kraken3', horaEntrada: '12:00', horaSalida: '20:00', horasPendientes: 0, currentAttendanceId: null, tasks: [], performanceRating: 'green', loan: { active: false, amount: 0, weeklyPayment: 0 }, loanRequest: { pending: true, amount: 1000, message: 'Adelanto para una emergencia familiar.' } } ];
 const initialProveedores: Proveedor[] = [ { id: 1, nombre: 'Distribuidora de Vinos del Nazas', contacto: 'Juan Torres', telefono: '871-555-0101', categoria: 'Bebidas' }, { id: 2, nombre: 'Carnes Finas La Laguna', contacto: 'Sofía Martínez', telefono: '871-555-0102', categoria: 'Alimentos' } ];
 const initialInventario: InventarioItem[] = [
     { id: 'cerveza-victoria', nombre: 'Cerveza Victoria', stock: 100, categoria: 'Bebidas', proveedorId: 1, um: 'pza', costoUnitario: 18.50, historialCostos: [] },
@@ -99,48 +111,122 @@ const UploadIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" heig
 const ChecklistIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v18h-6M10 21h-6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6M5 9l2 2 4-4"/></svg>;
 const SuccessIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
 const ErrorIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
+const LocationIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>;
+
+const Toast = ({ message, show }) => {
+    if (!show) return null;
+    return <div className="toast show">{message}</div>;
+};
 
 // --- CHECK-IN COMPONENT ---
-const CheckInContent = ({ empleado, onUpdate }: { empleado: Empleado, onUpdate: (action: EmpleadoUpdateAction) => void }) => {
+const CheckInContent = ({ empleado, asistencia, onUpdate }: { empleado: Empleado, asistencia: RegistroAsistencia[], onUpdate: (action: EmpleadoUpdateAction) => void }) => {
+    type View = 'loading' | 'clock-in' | 'in-progress' | 'summary';
+
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [currentTime, setCurrentTime] = useState(new Date());
     const [cameraError, setCameraError] = useState<string | null>(null);
+    const [location, setLocation] = useState<{ lat: number, lon: number } | null>(null);
+    const [locationError, setLocationError] = useState<string | null>(null);
+    const [isWithinGeofence, setIsWithinGeofence] = useState(false);
+    const [view, setView] = useState<View>('loading');
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [lastCompletedShift, setLastCompletedShift] = useState<RegistroAsistencia | null>(null);
+    const [toast, setToast] = useState({ show: false, message: '' });
 
+    const RESTAURANT_COORDS = { lat: 25.5383, lon: -103.4494 }; // Example: Torreón, Coahuila
+    const GEOFENCE_RADIUS = 100; // in meters
+
+    const activeAttendanceRecord = useMemo(() => 
+        asistencia.find(a => a.id === empleado.currentAttendanceId),
+        [asistencia, empleado.currentAttendanceId]
+    );
+
+    // Geolocation and Camera Initialization
     useEffect(() => {
         const timer = setInterval(() => setCurrentTime(new Date()), 1000);
 
-        let stream: MediaStream | null = null;
-        const initCamera = async () => {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                setCameraError("Tu dispositivo no es compatible con la cámara.");
-                return;
-            }
+        const getDistance = (from, to) => {
+            const R = 6371e3; // metres
+            const φ1 = from.lat * Math.PI/180;
+            const φ2 = to.lat * Math.PI/180;
+            const Δφ = (to.lat-from.lat) * Math.PI/180;
+            const Δλ = (to.lon-from.lon) * Math.PI/180;
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        };
+
+        const initPermissions = async () => {
+            let stream: MediaStream | null = null;
             try {
+                // Location
+                if (!navigator.geolocation) {
+                    throw new Error("La geolocalización no es compatible con este navegador.");
+                }
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const userCoords = { lat: position.coords.latitude, lon: position.coords.longitude };
+                        setLocation(userCoords);
+                        const distance = getDistance(userCoords, RESTAURANT_COORDS);
+                        if (distance <= GEOFENCE_RADIUS) {
+                            setIsWithinGeofence(true);
+                            setLocationError(null);
+                        } else {
+                            setIsWithinGeofence(false);
+                            setLocationError("Debes estar en el restaurante para registrar tu entrada.");
+                        }
+                    },
+                    (error) => {
+                        setLocationError("Se requiere acceso a la ubicación. Revisa los permisos.");
+                    },
+                    { enableHighAccuracy: true }
+                );
+
+                // Camera
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error("Tu dispositivo no es compatible con la cámara.");
+                }
                 stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
                 if (videoRef.current) {
                     videoRef.current.srcObject = stream;
                 }
+                setCameraError(null);
             } catch (err) {
-                console.error("Error al acceder a la cámara:", err);
-                setCameraError("Se requiere acceso a la cámara para registrar la entrada. Revisa los permisos en tu navegador.");
+                console.error("Error de permisos:", err);
+                if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+                    setCameraError("Se requiere acceso a la cámara. Revisa los permisos.");
+                } else {
+                    setCameraError(err.message);
+                }
+            } finally {
+                setView(empleado.currentAttendanceId ? 'in-progress' : 'clock-in');
             }
+            return stream;
         };
 
-        if (!empleado.clockInTime) {
-            initCamera();
+        let permissionStream: MediaStream | null = null;
+        if (!empleado.currentAttendanceId) {
+            initPermissions().then(stream => { permissionStream = stream; });
+        } else {
+            setView('in-progress');
         }
 
         return () => {
             clearInterval(timer);
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
+            if (permissionStream) {
+                permissionStream.getTracks().forEach(track => track.stop());
             }
         };
-    }, [empleado.clockInTime]);
+    }, [empleado.currentAttendanceId]);
+
+    const showToast = (message) => {
+        setToast({ show: true, message });
+        setTimeout(() => setToast({ show: false, message: '' }), 3000);
+    };
 
     const handleClockIn = () => {
-        if (!videoRef.current || !canvasRef.current || cameraError) return;
+        if (!videoRef.current || !canvasRef.current || cameraError || !location || !isWithinGeofence) return;
         
         const video = videoRef.current;
         const canvas = canvasRef.current;
@@ -155,59 +241,115 @@ const CheckInContent = ({ empleado, onUpdate }: { empleado: Empleado, onUpdate: 
         
         onUpdate({ 
             type: 'CLOCK_IN', 
-            payload: { empleadoId: empleado.id, timestamp: Date.now(), photo } 
+            payload: { empleadoId: empleado.id, timestamp: Date.now(), photo, coords: location } 
         });
+        showToast(`✅ ¡Entrada registrada a las ${new Date().toLocaleTimeString()}!`);
+        setView('in-progress');
     };
 
     const handleClockOut = () => {
+        setShowConfirmModal(false);
+        const timestamp = Date.now();
         onUpdate({ 
             type: 'CLOCK_OUT', 
-            payload: { empleadoId: empleado.id, timestamp: Date.now() } 
+            payload: { empleadoId: empleado.id, timestamp } 
         });
+        const completedShift = { ...activeAttendanceRecord, timestampSalida: timestamp, duracionMs: timestamp - activeAttendanceRecord.timestampEntrada };
+        setLastCompletedShift(completedShift);
+        setView('summary');
     };
 
-    if (!empleado.clockInTime) { // VISTA DE ENTRADA
+    const renderClockInView = () => {
+        const canClockIn = isWithinGeofence && !cameraError;
         return (
             <div style={{ textAlign: 'center' }}>
+                <Toast message={toast.message} show={toast.show} />
                 <h1 style={{ fontSize: '3rem', margin: '20px 0' }}>{currentTime.toLocaleTimeString()}</h1>
                 <div className="camera-container">
                     <video ref={videoRef} className="camera-feed" autoPlay playsInline muted></video>
-                    {cameraError && (
+                    {(cameraError || locationError) && (
                         <div className="camera-error">
-                            <CameraErrorIcon />
-                            <p>{cameraError}</p>
+                            {cameraError ? <CameraErrorIcon /> : <LocationIcon />}
+                            <p>{cameraError || locationError}</p>
                         </div>
                     )}
                 </div>
                 <canvas ref={canvasRef} style={{ display: 'none' }}></canvas>
-                <button onClick={handleClockIn} disabled={!!cameraError} className="action-button success" style={{width: '100%', padding: '20px', fontSize: '1.5rem'}}>
+                <button onClick={handleClockIn} disabled={!canClockIn} className="action-button success" style={{width: '100%', padding: '20px', fontSize: '1.5rem'}}>
                     REGISTRAR ENTRADA
                 </button>
             </div>
         );
-    } else { // VISTA DE SALIDA
-        const clockInDate = new Date(empleado.clockInTime);
+    };
+
+    const renderInProgressView = () => {
+        if (!activeAttendanceRecord) return <Loader text="Cargando datos del turno..." />;
+
+        const clockInDate = new Date(activeAttendanceRecord.timestampEntrada);
         const elapsedMs = currentTime.getTime() - clockInDate.getTime();
         const elapsedHours = Math.floor(elapsedMs / 3600000);
         const elapsedMinutes = Math.floor((elapsedMs % 3600000) / 60000);
 
         return (
             <div style={{ textAlign: 'center' }}>
+                <Toast message={toast.message} show={toast.show} />
                 <h2 className="section-title">Turno en Progreso</h2>
+                {activeAttendanceRecord.fotoEntrada && <img src={activeAttendanceRecord.fotoEntrada} alt="Foto de entrada" style={{width: '100px', height: '100px', borderRadius: '50%', objectFit: 'cover', margin: '20px auto'}} />}
                 <div className="kpi-card" style={{margin: '20px 0'}}>
                     <p className="kpi-label">Entrada Registrada a las:</p>
                     <p className="kpi-value">{clockInDate.toLocaleTimeString()}</p>
                 </div>
-                 <div className="kpi-card" style={{margin: '20px 0'}}>
+                <div className="kpi-card" style={{margin: '20px 0'}}>
                     <p className="kpi-label">Tiempo Transcurrido:</p>
                     <p className="kpi-value">{`${elapsedHours}h ${elapsedMinutes}m`}</p>
                 </div>
-                {empleado.capturedPhoto && <img src={empleado.capturedPhoto} alt="Foto de entrada" style={{width: '100px', height: '100px', borderRadius: '50%', objectFit: 'cover', margin: '20px auto'}} />}
-                <button onClick={handleClockOut} className="action-button danger" style={{width: '100%', padding: '20px', fontSize: '1.5rem'}}>
+                <button onClick={() => setShowConfirmModal(true)} className="action-button danger" style={{width: '100%', padding: '20px', fontSize: '1.5rem'}}>
                     FINALIZAR TURNO
                 </button>
+                <Modal show={showConfirmModal} onClose={() => setShowConfirmModal(false)} title="Confirmar Salida">
+                    <p>¿Seguro que quieres finalizar tu turno?</p>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-m)', marginTop: 'var(--space-l)'}}>
+                        <button className="action-button-secondary" onClick={() => setShowConfirmModal(false)}>Cancelar</button>
+                        <button className="action-button danger" onClick={handleClockOut}>Sí, finalizar</button>
+                    </div>
+                </Modal>
             </div>
         );
+    };
+
+    const renderSummaryView = () => {
+        if (!lastCompletedShift) return null;
+        const { timestampEntrada, timestampSalida, duracionMs, fotoEntrada } = lastCompletedShift;
+        const durationHours = Math.floor(duracionMs / 3600000);
+        const durationMinutes = Math.floor((duracionMs % 3600000) / 60000);
+
+        return (
+            <div style={{ textAlign: 'center' }}>
+                <h2 className="section-title">Turno Completado 👍</h2>
+                {fotoEntrada && <img src={fotoEntrada} alt="Foto de entrada" style={{width: '100px', height: '100px', borderRadius: '50%', objectFit: 'cover', margin: '20px auto'}} />}
+                <div className="kpi-card" style={{margin: '10px 0'}}>
+                    <p className="kpi-label">Entrada:</p>
+                    <p className="kpi-value">{new Date(timestampEntrada).toLocaleTimeString()}</p>
+                </div>
+                <div className="kpi-card" style={{margin: '10px 0'}}>
+                    <p className="kpi-label">Salida:</p>
+                    <p className="kpi-value">{new Date(timestampSalida).toLocaleTimeString()}</p>
+                </div>
+                <div className="kpi-card" style={{margin: '10px 0'}}>
+                    <p className="kpi-label">Duración del Turno:</p>
+                    <p className="kpi-value">{`${durationHours}h ${durationMinutes}m`}</p>
+                </div>
+                <button onClick={() => setView('clock-in')} className="action-button" style={{width: '100%', marginTop: '20px'}}>Volver al Inicio</button>
+            </div>
+        );
+    };
+
+    switch (view) {
+        case 'loading': return <Loader text="Verificando permisos..." />;
+        case 'clock-in': return renderClockInView();
+        case 'in-progress': return renderInProgressView();
+        case 'summary': return renderSummaryView();
+        default: return <Loader text="Cargando..." />;
     }
 };
 
@@ -535,41 +677,53 @@ const useNyxState = () => {
     const [gastos, setGastos] = useState<Gasto[]>([]);
     const [platillos, setPlatillos] = useState<Platillo[]>(initialPlatillos);
     const [syncHistory, setSyncHistory] = useState<SyncHistoryItem[]>(initialSyncHistory);
+    const [asistencia, setAsistencia] = useState<RegistroAsistencia[]>([]);
     
     const [currentUser, setCurrentUser] = useState<User>({ id: 'admin', type: 'admin' });
 
-    const handleEmpleadoUpdate = useCallback((action: EmpleadoUpdateAction) => {
-        setEmpleados(prev => {
-            switch (action.type) {
-                case 'CLOCK_IN':
-                    return prev.map(e => 
-                        e.id === action.payload.empleadoId 
-                        ? { ...e, clockInTime: action.payload.timestamp, capturedPhoto: action.payload.photo } 
-                        : e
-                    );
-                case 'CLOCK_OUT':
-                    return prev.map(e => {
-                        if (e.id === action.payload.empleadoId && e.clockInTime) {
-                            const durationMs = action.payload.timestamp - e.clockInTime;
-                            const durationHours = durationMs / (1000 * 60 * 60);
-                            const newHorasPendientes = (e.horasPendientes || 0) + durationHours;
-                            return { ...e, clockInTime: null, horasPendientes: newHorasPendientes };
-                        }
-                        return e;
-                    });
-                case 'ADD':
-                case 'UPDATE':
-                case 'DELETE':
-                case 'TOGGLE_TASK':
-                case 'ADD_TASK':
-                case 'APPROVE_LOAN':
-                case 'REJECT_LOAN':
-                    console.warn(`Action type ${action.type} is not yet implemented.`);
-                    return prev;
-                default:
-                    return prev;
-            }
-        });
+    const handleAttendanceAction = useCallback((action: EmpleadoUpdateAction) => {
+        if (action.type === 'CLOCK_IN') {
+            const { empleadoId, timestamp, photo, coords } = action.payload;
+            const newAttendanceRecord: RegistroAsistencia = {
+                id: `att-${Date.now()}`,
+                empleadoId,
+                timestampEntrada: timestamp,
+                timestampSalida: null,
+                duracionMs: null,
+                fotoEntrada: photo,
+                coordsEntrada: coords,
+                estado: 'ACTIVO',
+            };
+
+            setAsistencia(prev => [...prev, newAttendanceRecord]);
+            setEmpleados(prev => prev.map(e => 
+                e.id === empleadoId 
+                ? { ...e, currentAttendanceId: newAttendanceRecord.id } 
+                : e
+            ));
+        } else if (action.type === 'CLOCK_OUT') {
+            const { empleadoId, timestamp } = action.payload;
+            
+            setEmpleados(prevEmpleados => {
+                const employee = prevEmpleados.find(e => e.id === empleadoId);
+                if (!employee || !employee.currentAttendanceId) {
+                    return prevEmpleados; // No change if no active shift
+                }
+                const attendanceIdToClose = employee.currentAttendanceId;
+
+                setAsistencia(prevAsistencia => prevAsistencia.map(att => 
+                    att.id === attendanceIdToClose 
+                    ? { ...att, timestampSalida: timestamp, duracionMs: timestamp - att.timestampEntrada, estado: 'COMPLETADO' } 
+                    : att
+                ));
+                
+                return prevEmpleados.map(e => 
+                    e.id === empleadoId ? { ...e, currentAttendanceId: null } : e
+                );
+            });
+        } else {
+            console.warn(`Action type ${action.type} is not yet implemented.`);
+        }
     }, []);
     
     const handleInventarioUpdate = useCallback((action) => {
@@ -650,6 +804,7 @@ const useNyxState = () => {
         gastos,
         platillos,
         syncHistory,
+        asistencia,
         currentUser,
         loggedInEmpleado,
         actions: {
@@ -657,7 +812,7 @@ const useNyxState = () => {
             closeCard,
             backCard,
             handleSyncAdd,
-            handleEmpleadoUpdate,
+            handleAttendanceAction,
             handleInventarioUpdate,
             handleGastoAdd
         }
@@ -667,7 +822,7 @@ const useNyxState = () => {
 
 // --- MAIN APP ---
 const NyxApp = () => {
-    const { cards, animationStates, empleados, proveedores, inventario, gastos, platillos, syncHistory, currentUser, loggedInEmpleado, actions } = useNyxState();
+    const { cards, animationStates, empleados, proveedores, inventario, gastos, platillos, syncHistory, asistencia, currentUser, loggedInEmpleado, actions } = useNyxState();
     const [mode, setMode] = useState<'wallet' | 'desktop'>('wallet');
 
     useEffect(() => {
@@ -700,7 +855,7 @@ const NyxApp = () => {
         miHorario: <div>Empleado Mi Horario Content</div>,
         misTareas: <div>Empleado Mis Tareas Content</div>,
         misFinanzas: <div>Empleado Mis Finanzas Content</div>,
-        checkIn: loggedInEmpleado ? <CheckInContent empleado={loggedInEmpleado} onUpdate={actions.handleEmpleadoUpdate} /> : <div>Cargando empleado...</div>,
+        checkIn: loggedInEmpleado ? <CheckInContent empleado={loggedInEmpleado} asistencia={asistencia} onUpdate={actions.handleAttendanceAction} /> : <div>Cargando empleado...</div>,
         estado: <div>Dev Estado Content</div>,
         apiLogs: <div>Dev API Logs Content</div>,
         sincronizacion: <SincronizacionContent history={syncHistory} onSyncAdd={actions.handleSyncAdd} onDataUpdate={() => { console.log("Data update triggered"); }} />,

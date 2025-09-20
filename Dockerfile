@@ -22,11 +22,15 @@ FROM node:lts-alpine
 ENV NODE_ENV=production
 WORKDIR /usr/src/app
 
-COPY package*.json ./
+COPY --from=build /usr/src/app/package*.json ./
 RUN npm install --production
 
 COPY --from=build /usr/src/app/dist ./dist
-COPY server.js .
+COPY --from=build /usr/src/app/server.js .
+
+# Set correct permissions for the non-root user and switch to it
+RUN chown -R node:node .
+USER node
 
 EXPOSE 3001
 CMD ["node", "server.js"]

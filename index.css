@@ -575,6 +575,20 @@ textarea {
     color: var(--priority-high);
 }
 
+/* --- TOAST NOTIFICATION --- */
+.toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translate(-50%, -100px);
+    background-color: var(--priority-low);
+    color: white;
+    padding: var(--space-s) var(--space-l);
+    border-radius: 10px;
+    z-index: 2000;
+    transition: transform 0.4s var(--transition-curve);
+}
+.toast.show { transform: translate(-50%, 0); }
 
 /* --- ANIMATIONS --- */
 @keyframes fadeIn {
