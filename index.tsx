@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
-import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 
 // --- TYPES ---
 type CardData = { id: string; appId: string; title: string; };
@@ -10,7 +9,6 @@ type Proveedor = { id: number; nombre: string; contacto: string; telefono: strin
 type User = { id: string, type: 'admin' | 'empleado' | 'developer' };
 type Schedule = { [day: string]: { [empleadoId: string]: string } };
 type ApiLog = { timestamp: string, request: any, response: any, error?: boolean };
-type Shift = 'Mañana' | 'Tarde' | 'Noche' | 'Descanso';
 type SyncHistoryItem = { id: string; date: string; task: string; status: 'completado' | 'fallido'; itemCount: number; userId: string; details: string; };
 
 // --- FINANCIAL TYPES ---
@@ -55,18 +53,15 @@ const initialPlatillos: Platillo[] = [
     { id: 'taco-carne', nombre: 'Taco de Rib Eye', precioVenta: 85, ingredientes: [{ inventarioId: 'rib-eye', cantidad: 0.150 /* 150g */ }] },
     { id: 'guacamole', nombre: 'Guacamole', precioVenta: 120, ingredientes: [{ inventarioId: 'aguacate', cantidad: 0.300 }, { inventarioId: 'limon', cantidad: 0.050 }] }
 ];
+const initialSyncHistory: SyncHistoryItem[] = [
+    { id: 'sync-1', date: '2024-07-20T10:00:00Z', task: 'Corte de Caja', status: 'completado', itemCount: 152, userId: 'admin', details: 'Se importaron 152 registros de ventas.' },
+    { id: 'sync-2', date: '2024-07-19T11:30:00Z', task: 'Corte de Caja', status: 'fallido', itemCount: 0, userId: 'admin', details: 'Error de formato en el archivo CSV en la línea 42.' },
+];
+
 
 
 // --- HELPER FUNCTIONS & COMPONENTS ---
 const formatCurrency = (value: number) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value);
-const fileToGenerativePart = async (file) => {
-    const base64EncodedDataPromise = new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => typeof reader.result === 'string' ? resolve(reader.result.split(',')[1]) : resolve(null);
-        reader.readAsDataURL(file);
-    });
-    return { inlineData: { data: await base64EncodedDataPromise, mimeType: file.type } };
-};
 const Loader = ({text = "Procesando..."}) => <div className="loader-container"><div className="loader"></div><span>{text}</span></div>;
 const CameraErrorIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><line x1="1" y1="1" x2="23" y2="23"/><circle cx="12" cy="13" r="3"/></svg>;
 const Modal = ({ show, onClose, title, children }) => {
@@ -100,6 +95,10 @@ const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height
 const AiIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><path d="M2.5 16.5A2.5 2.5 0 0 1 0 14V3.5A2.5 2.5 0 0 1 2.5 1H14a2.5 2.5 0 0 1 2.5 2.5V6"/><path d="M21.5 8.5A2.5 2.5 0 0 1 24 11v9.5a2.5 2.5 0 0 1-2.5 2.5h-10A2.5 2.5 0 0 1 9 20.5V18"/></svg>;
 const SincronizacionIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>;
 const MenuIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1z" /><path d="M7 15.5c-1 0-1.5-1-1.5-2.5 0-2.5 1.33-4.5 3-4.5 1.67 0 3 2 3 4.5 0 1.5-.5 2.5-1.5 2.5" /><path d="M17 15.5c-1 0-1.5-1-1.5-2.5 0-2.5 1.33-4.5 3-4.5 1.67 0 3 2 3 4.5 0 1.5-.5 2.5-1.5 2.5" /></svg>;
+const UploadIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>;
+const ChecklistIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v18h-6M10 21h-6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6M5 9l2 2 4-4"/></svg>;
+const SuccessIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+const ErrorIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
 
 // --- CHECK-IN COMPONENT ---
 const CheckInContent = ({ empleado, onUpdate }: { empleado: Empleado, onUpdate: (action: EmpleadoUpdateAction) => void }) => {
@@ -270,36 +269,27 @@ const GastosContent = ({ inventario, onGastoAdd, onInventarioUpdate }) => {
         setLoading(true);
         setError(null);
         setExtractedItems([]);
+        
+        const formData = new FormData();
+        formData.append('image', file);
+        formData.append('prompt', "Analiza la imagen de este ticket. Extrae cada línea de producto como un objeto JSON con 'descripcion', 'cantidad' y 'precio'. Devuelve un array de estos objetos. No incluyas impuestos, subtotales o totales.");
+
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const imagePart = await fileToGenerativePart(file);
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                // FIX: The `contents` property for a multimodal request should be a single Content object, not an array of Content objects.
-                contents: { 
-                    parts: [imagePart, { text: "Analiza la imagen de este ticket. Extrae cada línea de producto como un objeto JSON. Para cada producto, extrae su descripción, la cantidad comprada y el precio total por esa línea. Devuelve un array de estos objetos JSON. No incluyas impuestos, subtotales, totales o propinas." }] 
-                },
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: Type.ARRAY,
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                descripcion: { type: Type.STRING },
-                                cantidad: { type: Type.NUMBER },
-                                precio: { type: Type.NUMBER }
-                            },
-                            required: ["descripcion", "cantidad", "precio"]
-                        }
-                    }
-                }
+            const response = await fetch('/api/ocr', {
+                method: 'POST',
+                body: formData,
             });
-            const parsedJson = JSON.parse(response.text);
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error en el servidor al procesar el ticket.');
+            }
+
+            const parsedJson = await response.json();
             setExtractedItems(parsedJson.map(item => ({ ...item, id: `gasto-item-${Date.now()}-${Math.random()}` })));
         } catch (e) {
             console.error(e);
-            setError("No se pudo procesar la imagen. Intenta de nuevo.");
+            setError(e.message || "No se pudo procesar la imagen. Intenta de nuevo.");
         } finally {
             setLoading(false);
         }
@@ -544,6 +534,7 @@ const useNyxState = () => {
     const [inventario, setInventario] = useState<InventarioItem[]>(initialInventario);
     const [gastos, setGastos] = useState<Gasto[]>([]);
     const [platillos, setPlatillos] = useState<Platillo[]>(initialPlatillos);
+    const [syncHistory, setSyncHistory] = useState<SyncHistoryItem[]>(initialSyncHistory);
     
     const [currentUser, setCurrentUser] = useState<User>({ id: 'admin', type: 'admin' });
 
@@ -612,6 +603,15 @@ const useNyxState = () => {
         setGastos(prev => [...prev, gasto]);
     }, []);
 
+    const handleSyncAdd = useCallback((item: Omit<SyncHistoryItem, 'id' | 'date' | 'userId'>) => {
+        setSyncHistory(prev => [{
+            id: `sync-${Date.now()}`,
+            date: new Date().toISOString(),
+            userId: currentUser.id,
+            ...item
+        }, ...prev]);
+    }, [currentUser.id]);
+
     const openApp = useCallback((appId: AppId) => {
         const newCardId = `${appId}-${Date.now()}`;
         const newCard: CardData = { id: newCardId, appId, title: appId.charAt(0).toUpperCase() + appId.slice(1) };
@@ -649,12 +649,14 @@ const useNyxState = () => {
         inventario,
         gastos,
         platillos,
+        syncHistory,
         currentUser,
         loggedInEmpleado,
         actions: {
             openApp,
             closeCard,
             backCard,
+            handleSyncAdd,
             handleEmpleadoUpdate,
             handleInventarioUpdate,
             handleGastoAdd
@@ -665,7 +667,7 @@ const useNyxState = () => {
 
 // --- MAIN APP ---
 const NyxApp = () => {
-    const { cards, animationStates, empleados, proveedores, inventario, gastos, platillos, currentUser, loggedInEmpleado, actions } = useNyxState();
+    const { cards, animationStates, empleados, proveedores, inventario, gastos, platillos, syncHistory, currentUser, loggedInEmpleado, actions } = useNyxState();
     const [mode, setMode] = useState<'wallet' | 'desktop'>('wallet');
 
     useEffect(() => {
@@ -701,7 +703,7 @@ const NyxApp = () => {
         checkIn: loggedInEmpleado ? <CheckInContent empleado={loggedInEmpleado} onUpdate={actions.handleEmpleadoUpdate} /> : <div>Cargando empleado...</div>,
         estado: <div>Dev Estado Content</div>,
         apiLogs: <div>Dev API Logs Content</div>,
-        sincronizacion: <div>Dev Sincronización Content</div>,
+        sincronizacion: <SincronizacionContent history={syncHistory} onSyncAdd={actions.handleSyncAdd} onDataUpdate={() => { console.log("Data update triggered"); }} />,
     };
     
     return (
